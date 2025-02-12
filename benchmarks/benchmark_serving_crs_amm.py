@@ -1,4 +1,4 @@
-r"""Benchmark online serving throughput.
+r"""Benchmark for AMM integratwed vLLM  serving throughput and latency analysis .
 
 On the server side, run one of the following commands:
     vLLM OpenAI API server
@@ -18,9 +18,7 @@ On the client side, run:
         --request-rate <request_rate> \ # By default <request_rate> is inf
         --num-prompts <num_prompts> # By default <num_prompts> is 1000
 
-    when using tgi backend, add
-        --endpoint /generate_stream
-    to the end of the command above.
+
 """
 import argparse
 import asyncio

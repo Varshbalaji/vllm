@@ -140,7 +140,79 @@ class UnquantizedLinearMethod(LinearMethodBase):
               bias: Optional[torch.Tensor] = None) -> torch.Tensor:
 
         return F.linear(x, layer.weight, bias)
+    
+    
+#New Linear Method to replac eUnqunarized linear method 
+class AMMLinearMethod(LinearMethodBase):
+    """Linear method using CRS Approximate Matrix Multiplication (AMM).
+    
+    Implements the same AMM approach 
+    using CRS algorithm for approximate matrix multiplication.
+    """
+    
+    def __init__(self):
+        super().__init__()
+        # Initialize CRS AMM algorithm as shown in notebook
+        self.crs = amm.createAMM('crs')
+        
+    def create_weights(self, layer: torch.nn.Module,
+                     input_size_per_partition: int,
+                     output_partition_sizes: List[int], 
+                     input_size: int,
+                     output_size: int, 
+                     params_dtype: torch.dtype,
+                     **extra_weight_attrs):
+        """Create weights for the linear layer.
+        
+        For amm configuration.
+        """
+        # Create weight parameter
+        weight = Parameter(torch.empty(sum(output_partition_sizes),
+                                    input_size_per_partition,
+                                    dtype=params_dtype),
+                         requires_grad=False)
+        
+        # Set weight attributes
+        set_weight_attrs(weight, {"input_dim": 1, "output_dim": 0})
+        layer.register_parameter("weight", weight)
+        set_weight_attrs(weight, extra_weight_attrs)
+        
+        # Configure CRS algorithm exactly as shown in notebook
+        cfg = {
+            'aRow': sum(output_partition_sizes),
+            'aCol': input_size_per_partition,
+            'bCol': input_size_per_partition
+        }
+        self.crs.setConfig(amm.dictToConfigMap(cfg))
 
+    def apply(self,
+             layer: torch.nn.Module,
+             x: torch.Tensor,
+             bias: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Apply the linear transformation using CRS AMM.
+        
+        Implements matrix multiplication using AMM exactly as shown in notebook:
+        ammRu = crs.amm(a, a, 3)
+        """
+        # Handle input shape
+        input_shape = x.size()
+        if len(input_shape) == 3:
+            # Batch x Sequence x Hidden
+            x = x.view(-1, input_shape[-1])
+            
+        # Perform matrix multiplication using CRS AMM
+        # Use accuracy parameter of 3 as shown in notebook example
+        output = self.crs.amm(layer.weight, x.t(), 3).t()
+        
+        # Add bias if provided
+        if bias is not None:
+            output = output + bias
+            
+        # Restore original shape if needed
+        if len(input_shape) == 3:
+            output = output.view(input_shape[0], input_shape[1], -1)
+            
+        return output
 
 class LinearBase(torch.nn.Module):
     """Base linear layer.

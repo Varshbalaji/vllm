@@ -251,20 +251,21 @@ class AMMLinearMethod(LinearMethodBase):
         self.crs.setConfig(amm.dictToConfigMap(cfg))
 
     def apply(self,
-             layer: torch.nn.Module,
-             x: torch.Tensor,
-             bias: Optional[torch.Tensor] = None) -> torch.Tensor:
-        # Store original device and shape
+            layer: torch.nn.Module,
+            x: torch.Tensor,
+            bias: Optional[torch.Tensor] = None) -> torch.Tensor:
+        # Store original device, shape and dtype
         orig_device = x.device
         orig_shape = x.size()
+        orig_dtype = x.dtype
         
         # Reshape if needed
         if len(orig_shape) > 2:
             x = x.view(-1, orig_shape[-1])
         
-        # Move tensors to CPU for AMM
-        x_cpu = x.cpu()
-        weight_cpu = layer.weight.cpu()
+        # Move tensors to CPU and convert to float
+        x_cpu = x.cpu().float()  # Convert to float32
+        weight_cpu = layer.weight.cpu().float()  # Convert to float32
         
         # Configure for current dimensions
         cfg = {
@@ -277,8 +278,8 @@ class AMMLinearMethod(LinearMethodBase):
         # Perform AMM on CPU
         output = self.crs.amm(weight_cpu, x_cpu.T, 3).T
         
-        # Move result back to original device
-        output = output.to(orig_device)
+        # Move result back to original device and dtype
+        output = output.to(dtype=orig_dtype, device=orig_device)
             
         # Add bias if provided
         if bias is not None:

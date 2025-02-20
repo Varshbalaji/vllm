@@ -7,7 +7,9 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter, UninitializedParameter
-
+import sys
+sys.path.append('/home/ubuntu/.local/lib/python3.10/site-packages/PyAMM-0.1-py3.10-linux-x86_64.egg')
+import PyAMM as amm
 from vllm.distributed import (divide, get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
                               split_tensor_along_last_dim,
@@ -27,6 +29,7 @@ from vllm.model_executor.parameter import (BasevLLMParameter,
 from vllm.model_executor.utils import set_weight_attrs
 
 logger = init_logger(__name__)
+
 
 WEIGHT_LOADER_V2_SUPPORTED = [
     "CompressedTensorsLinearMethod", "AWQMarlinLinearMethod",
@@ -143,30 +146,101 @@ class UnquantizedLinearMethod(LinearMethodBase):
     
     
 #New Linear Method to replac eUnqunarized linear method 
+# class AMMLinearMethod(LinearMethodBase):
+#     """Linear method using CRS Approximate Matrix Multiplication (AMM).
+    
+#     Implements the same AMM approach 
+#     using CRS algorithm for approximate matrix multiplication.
+#     """
+    
+#     def __init__(self):
+#         super().__init__()
+#         # Initialize CRS AMM algorithm as shown in notebook
+#         self.crs = amm.createAMM('crs')
+        
+#     def create_weights(self, layer: torch.nn.Module,
+#                      input_size_per_partition: int,
+#                      output_partition_sizes: List[int], 
+#                      input_size: int,
+#                      output_size: int, 
+#                      params_dtype: torch.dtype,
+#                      **extra_weight_attrs):
+#         """Create weights for the linear layer.
+        
+#         For amm configuration.
+#         """
+#         # Create weight parameter
+#         weight = Parameter(torch.empty(sum(output_partition_sizes),
+#                                     input_size_per_partition,
+#                                     dtype=params_dtype),
+#                          requires_grad=False)
+        
+#         # Set weight attributes
+#         set_weight_attrs(weight, {"input_dim": 1, "output_dim": 0})
+#         layer.register_parameter("weight", weight)
+#         set_weight_attrs(weight, extra_weight_attrs)
+        
+#         # Configure CRS algorithm exactly as shown in notebook
+#         cfg = {
+#             'aRow': sum(output_partition_sizes),
+#             'aCol': input_size_per_partition,
+#             'bCol': input_size_per_partition
+#         }
+#         self.crs.setConfig(amm.dictToConfigMap(cfg))
+
+#     def apply(self,
+#              layer: torch.nn.Module,
+#              x: torch.Tensor,
+#              bias: Optional[torch.Tensor] = None) -> torch.Tensor:
+#         """Apply the linear transformation using CRS AMM.
+        
+#         Implements matrix multiplication using AMM exactly as shown in notebook:
+#         ammRu = crs.amm(a, a, 3)
+#         """
+#         # Handle input shape
+#         input_shape = x.size()
+#         if len(input_shape) == 3:
+#             # Batch x Sequence x Hidden
+#             x = x.view(-1, input_shape[-1])
+            
+#         # Perform matrix multiplication using CRS AMM
+#         # Use accuracy parameter of 3 as shown in notebook example
+#         output = self.crs.amm(layer.weight, x.t(), 3).t()
+        
+#         # Add bias if provided
+#         if bias is not None:
+#             output = output + bias
+            
+#         # Restore original shape if needed
+#         if len(input_shape) == 3:
+#             output = output.view(input_shape[0], input_shape[1], -1)
+            
+#         return output
+
 class AMMLinearMethod(LinearMethodBase):
     """Linear method using CRS Approximate Matrix Multiplication (AMM).
     
-    Implements the same AMM approach 
-    using CRS algorithm for approximate matrix multiplication.
+    Replaces the standard F.linear operation with PyAMM's CRS AMM implementation
+    while maintaining the same interface as UnquantizedLinearMethod.
     """
     
     def __init__(self):
         super().__init__()
-        # Initialize CRS AMM algorithm as shown in notebook
+        import sys
+        sys.path.append('/home/ubuntu/.local/lib/python3.10/site-packages/PyAMM-0.1-py3.10-linux-x86_64.egg')
+        import PyAMM as amm
+        # Initialize CRS AMM algorithm
         self.crs = amm.createAMM('crs')
-        
+
     def create_weights(self, layer: torch.nn.Module,
-                     input_size_per_partition: int,
-                     output_partition_sizes: List[int], 
-                     input_size: int,
-                     output_size: int, 
-                     params_dtype: torch.dtype,
-                     **extra_weight_attrs):
-        """Create weights for the linear layer.
-        
-        For amm configuration.
-        """
-        # Create weight parameter
+                      input_size_per_partition: int,
+                      output_partition_sizes: list[int], 
+                      input_size: int,
+                      output_size: int, 
+                      params_dtype: torch.dtype,
+                      **extra_weight_attrs):
+        """Create weights for the linear layer."""
+        # Create weight parameter (same as UnquantizedLinearMethod)
         weight = Parameter(torch.empty(sum(output_partition_sizes),
                                     input_size_per_partition,
                                     dtype=params_dtype),
@@ -177,11 +251,11 @@ class AMMLinearMethod(LinearMethodBase):
         layer.register_parameter("weight", weight)
         set_weight_attrs(weight, extra_weight_attrs)
         
-        # Configure CRS algorithm exactly as shown in notebook
+        # Configure CRS algorithm for these dimensions
         cfg = {
             'aRow': sum(output_partition_sizes),
             'aCol': input_size_per_partition,
-            'bCol': input_size_per_partition
+            'bCol': input_size_per_partition  # This will be adjusted dynamically in apply()
         }
         self.crs.setConfig(amm.dictToConfigMap(cfg))
 
@@ -191,26 +265,34 @@ class AMMLinearMethod(LinearMethodBase):
              bias: Optional[torch.Tensor] = None) -> torch.Tensor:
         """Apply the linear transformation using CRS AMM.
         
-        Implements matrix multiplication using AMM exactly as shown in notebook:
-        ammRu = crs.amm(a, a, 3)
+        Replaces F.linear with PyAMM's CRS AMM implementation
         """
-        # Handle input shape
-        input_shape = x.size()
-        if len(input_shape) == 3:
-            # Batch x Sequence x Hidden
-            x = x.view(-1, input_shape[-1])
+        # Get input shape and reshape if needed
+        orig_shape = x.size()
+        if len(orig_shape) > 2:
+            x = x.view(-1, orig_shape[-1])
             
-        # Perform matrix multiplication using CRS AMM
-        # Use accuracy parameter of 3 as shown in notebook example
-        output = self.crs.amm(layer.weight, x.t(), 3).t()
+        # Update CRS config for current input dimensions
+        cfg = {
+            'aRow': layer.weight.size(0),
+            'aCol': layer.weight.size(1),
+            'bCol': x.size(1)
+        }
+        self.crs.setConfig(amm.dictToConfigMap(cfg))
         
+        # PyAMM expects the second matrix to be transposed compared to F.linear
+        # F.linear does: x @ weight.T
+        # PyAMM does: weight @ x.T
+        # So we transpose x and the result
+        output = self.crs.amm(layer.weight, x.T, 3).T
+            
         # Add bias if provided
         if bias is not None:
             output = output + bias
             
         # Restore original shape if needed
-        if len(input_shape) == 3:
-            output = output.view(input_shape[0], input_shape[1], -1)
+        if len(orig_shape) > 2:
+            output = output.view(*orig_shape[:-1], -1)
             
         return output
 

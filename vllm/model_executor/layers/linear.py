@@ -220,37 +220,10 @@ class UnquantizedLinearMethod(LinearMethodBase):
 class AMMLinearMethod(LinearMethodBase):
     """Linear method using CRS Approximate Matrix Multiplication (AMM)."""
     
-    # def __init__(self):
-    #     super().__init__()
-    #     import sys
-    #     sys.path.append('/home/ubuntu/.local/lib/python3.10/site-packages/PyAMM-0.1-py3.10-linux-x86_64.egg')
-    #     import PyAMM as amm
-    #     self.crs = amm.createAMM('crs')
-
-    # def create_weights(self, layer: torch.nn.Module,
-    #                   input_size_per_partition: int,
-    #                   output_partition_sizes: list[int], 
-    #                   input_size: int,
-    #                   output_size: int, 
-    #                   params_dtype: torch.dtype,
-    #                   **extra_weight_attrs):
-    #     weight = Parameter(torch.empty(sum(output_partition_sizes),
-    #                                 input_size_per_partition,
-    #                                 dtype=params_dtype),
-    #                      requires_grad=False)
-        
-    #     set_weight_attrs(weight, {"input_dim": 1, "output_dim": 0})
-    #     layer.register_parameter("weight", weight)
-    #     set_weight_attrs(weight, extra_weight_attrs)
-        
-    #     cfg = {
-    #         'aRow': sum(output_partition_sizes),
-    #         'aCol': input_size_per_partition,
-    #         'bCol': input_size_per_partition
-    #     }
-    #     self.crs.setConfig(amm.dictToConfigMap(cfg))
     def __init__(self):
         super().__init__()
+        import sys
+        sys.path.append('/home/ubuntu/.local/lib/python3.10/site-packages/PyAMM-0.1-py3.10-linux-x86_64.egg')
         import PyAMM as amm
         self.crs = amm.createAMM('crs')
 

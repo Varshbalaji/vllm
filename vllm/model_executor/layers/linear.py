@@ -220,29 +220,57 @@ class UnquantizedLinearMethod(LinearMethodBase):
 class AMMLinearMethod(LinearMethodBase):
     """Linear method using CRS Approximate Matrix Multiplication (AMM)."""
     
+    # def __init__(self):
+    #     super().__init__()
+    #     import sys
+    #     sys.path.append('/home/ubuntu/.local/lib/python3.10/site-packages/PyAMM-0.1-py3.10-linux-x86_64.egg')
+    #     import PyAMM as amm
+    #     self.crs = amm.createAMM('crs')
+
+    # def create_weights(self, layer: torch.nn.Module,
+    #                   input_size_per_partition: int,
+    #                   output_partition_sizes: list[int], 
+    #                   input_size: int,
+    #                   output_size: int, 
+    #                   params_dtype: torch.dtype,
+    #                   **extra_weight_attrs):
+    #     weight = Parameter(torch.empty(sum(output_partition_sizes),
+    #                                 input_size_per_partition,
+    #                                 dtype=params_dtype),
+    #                      requires_grad=False)
+        
+    #     set_weight_attrs(weight, {"input_dim": 1, "output_dim": 0})
+    #     layer.register_parameter("weight", weight)
+    #     set_weight_attrs(weight, extra_weight_attrs)
+        
+    #     cfg = {
+    #         'aRow': sum(output_partition_sizes),
+    #         'aCol': input_size_per_partition,
+    #         'bCol': input_size_per_partition
+    #     }
+    #     self.crs.setConfig(amm.dictToConfigMap(cfg))
     def __init__(self):
         super().__init__()
-        import sys
-        sys.path.append('/home/ubuntu/.local/lib/python3.10/site-packages/PyAMM-0.1-py3.10-linux-x86_64.egg')
         import PyAMM as amm
         self.crs = amm.createAMM('crs')
 
     def create_weights(self, layer: torch.nn.Module,
                       input_size_per_partition: int,
-                      output_partition_sizes: list[int], 
+                      output_partition_sizes: list[int],
                       input_size: int,
-                      output_size: int, 
+                      output_size: int,
                       params_dtype: torch.dtype,
                       **extra_weight_attrs):
+        """Create weight parameter on CPU (PyAMM does not support CUDA)."""
         weight = Parameter(torch.empty(sum(output_partition_sizes),
-                                    input_size_per_partition,
-                                    dtype=params_dtype),
-                         requires_grad=False)
-        
+                                       input_size_per_partition,
+                                       dtype=params_dtype, device="cpu"),
+                           requires_grad=False)
+
         set_weight_attrs(weight, {"input_dim": 1, "output_dim": 0})
         layer.register_parameter("weight", weight)
         set_weight_attrs(weight, extra_weight_attrs)
-        
+
         cfg = {
             'aRow': sum(output_partition_sizes),
             'aCol': input_size_per_partition,
@@ -250,45 +278,81 @@ class AMMLinearMethod(LinearMethodBase):
         }
         self.crs.setConfig(amm.dictToConfigMap(cfg))
 
-    def apply(self,
-            layer: torch.nn.Module,
-            x: torch.Tensor,
-            bias: Optional[torch.Tensor] = None) -> torch.Tensor:
-        # Store original device, shape and dtype
-        orig_device = x.device
-        orig_shape = x.size()
-        orig_dtype = x.dtype
+    # def apply(self,
+    #      layer: torch.nn.Module,
+    #      x: torch.Tensor,
+    #      bias: Optional[torch.Tensor] = None) -> torch.Tensor:
+    #     # Store original device, shape and dtype
+    #     orig_device = x.device
+    #     orig_shape = x.size()
+    #     orig_dtype = x.dtype
         
-        # Reshape if needed
-        if len(orig_shape) > 2:
-            x = x.view(-1, orig_shape[-1])
+    #     # Reshape if needed and make contiguous
+    #     if len(orig_shape) > 2:
+    #         x = x.view(-1, orig_shape[-1])
+    #     x = x.contiguous()
         
-        # Move tensors to CPU and convert to float
-        x_cpu = x.cpu().float()  # Convert to float32
-        weight_cpu = layer.weight.cpu().float()  # Convert to float32
+    #     # Move tensors to CPU and convert to float
+    #     x_cpu = x.cpu().float()
+    #     weight_cpu = layer.weight.cpu().float()
         
-        # Configure for current dimensions
-        cfg = {
-            'aRow': weight_cpu.size(0),
-            'aCol': weight_cpu.size(1),
-            'bCol': x_cpu.size(1)
-        }
-        self.crs.setConfig(amm.dictToConfigMap(cfg))
+    #     # Configure for current dimensions
+    #     cfg = {
+    #         'aRow': weight_cpu.size(0),
+    #         'aCol': weight_cpu.size(1),
+    #         'bCol': x_cpu.size(1)
+    #     }
+    #     self.crs.setConfig(amm.dictToConfigMap(cfg))
         
-        # Perform AMM on CPU
-        output = self.crs.amm(weight_cpu, x_cpu.T, 3).T
+    #     # Perform AMM on CPU
+    #     output = self.crs.amm(weight_cpu, x_cpu.T, 3).T
         
-        # Move result back to original device and dtype
-        output = output.to(dtype=orig_dtype, device=orig_device)
+    #     # Make output contiguous before device/dtype conversion
+    #     output = output.contiguous()
+        
+    #     # Move result back to original device and dtype
+    #     output = output.to(dtype=orig_dtype, device=orig_device)
             
+    #     # Add bias if provided
+    #     if bias is not None:
+    #         output = output + bias
+            
+    #     # Restore original shape and ensure contiguity
+    #     if len(orig_shape) > 2:
+    #         output = output.view(*orig_shape[:-1], -1).contiguous()
+            
+    #     return output
+    def apply(self,
+              layer: torch.nn.Module,
+              x: torch.Tensor,
+              bias: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Perform matrix multiplication using AMM while ensuring FlashAttention compatibility."""
+        # Store original device, dtype, and shape
+        orig_device = x.device
+        orig_dtype = x.dtype
+        orig_shape = x.shape
+
+        # Ensure input is contiguous for FlashAttention
+        x = x.contiguous()
+
+        # Move weight & input to CPU for AMM computation
+        x_cpu = x.detach().cpu().contiguous().float()  # Ensure contiguity on CPU
+        weight_cpu = layer.weight.detach().cpu().contiguous().float()
+
+        # Perform AMM on CPU
+        output_cpu = self.crs.amm(weight_cpu, x_cpu.T, 3).T
+
+        # Move result back to CUDA efficiently
+        output = output_cpu.to(device=orig_device, dtype=orig_dtype).contiguous()
+
+        # Restore original shape (needed for batch processing)
+        if len(orig_shape) > 2:
+            output = output.view(*orig_shape[:-1], -1).contiguous()
+
         # Add bias if provided
         if bias is not None:
             output = output + bias
-            
-        # Restore original shape if needed
-        if len(orig_shape) > 2:
-            output = output.view(*orig_shape[:-1], -1)
-            
+
         return output
 
 class LinearBase(torch.nn.Module):

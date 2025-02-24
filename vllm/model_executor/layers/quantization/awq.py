@@ -12,6 +12,13 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.parameter import (GroupQuantScaleParameter,
                                            PackedvLLMParameter)
 
+import sys
+sys.path.append('/home/ubuntu/.local/lib/python3.10/site-packages/PyAMM-0.1-py3.10-linux-x86_64.egg')
+
+import PyAMM as amm
+self.crs = amm.createAMM('crs')
+
+
 
 class AWQConfig(QuantizationConfig):
     """Config class for AWQ.
@@ -93,6 +100,8 @@ class AWQLinearMethod(LinearMethodBase):
 
     def __init__(self, quant_config: AWQConfig):
         self.quant_config = quant_config
+        import PyAMM as amm
+        self.crs = amm.createAMM('crs')
 
     def create_weights(self, layer: torch.nn.Module,
                        input_size_per_partition: int,
@@ -174,7 +183,17 @@ class AWQLinearMethod(LinearMethodBase):
 
         if FP16_MATMUL_HEURISTIC_CONDITION:
             out = ops.awq_dequantize(qweight, scales, qzeros, 0, 0, 0)
-            out = torch.matmul(reshaped_x, out)
+            
+            cfg = {
+                'aRow': out.shape[0],  # Ensure shape matches
+                'aCol': reshaped_x.shape[1],
+                'bCol': out.shape[1]
+            }
+            self.crs.setConfig(amm.dictToConfigMap(cfg))
+            output_cpu = self.crs.amm(out.cpu(), reshaped_x.cpu().T, 3).T
+            out = output_cpu.cuda()
+        
+            # out = torch.matmul(reshaped_x, out)
         else:
             out = ops.awq_gemm(reshaped_x, qweight, scales, qzeros,
                                pack_factor)

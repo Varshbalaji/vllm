@@ -15,10 +15,21 @@ Easy, fast, and cheap LLM serving for everyone
 
 ## About
 
-vLLM is a fast and easy-to-use library for LLM inference and serving.
+This work addresses the aforementioned challenges by exploring integrating Approximate
+Matrix Multiplication (AMM) algorithms into inference-serving frameworks
+such as vLLM, presenting a novel approach to LLM inference optimization. vLLM is a fast and easy-to-use library for LLM inference and serving. To enhance
+inference efficiency in vLLM deployments, this study explores the application
+of approximate computation techniques within its transformer-based pipeline, directly
+targeting the bottleneck introduced by matrix multiplication. Specifically, we investigate
+the integration of pruning and hybrid AMM algorithms from the LibAMM
+framework as a replacement for conventional dense matrix multiplications in the feedforward
+and attention layers of vLLM. Additionally, we present a detailed evaluation
+of experiments conducted to reduce inference latency using AMM, while analyzing
+the resulting trade-offs in model accuracy, providing insights into the feasibility of
+AMM-based optimizations for large-scale LLM inference.
+5. 
 
 
-vLLM is fast with:
 
 - State-of-the-art serving throughput
 - Efficient management of attention key and value memory with [**PagedAttention**](https://blog.vllm.ai/2023/06/20/vllm.html)
